@@ -261,6 +261,62 @@
     .tab-panel { display: none; }
     .tab-panel.active { display: block; }
 
+    /* ── Summarize tab ── */
+    .sum-grid { display: flex; flex-direction: column; gap: 20px; }
+    .sum-card {
+      background: #16213e; border: 2px solid #2a2a4a;
+      border-radius: 12px; padding: 20px;
+    }
+    .sum-card h3 { color: #f1fa8c; margin-bottom: 14px; font-size: 1.1rem; }
+    .sum-card h4 { color: #ccc; margin-bottom: 10px; font-size: 0.95rem; }
+    .sum-keyrow { display: flex; gap: 10px; flex-wrap: wrap; }
+    .sum-keyrow input[type="password"],
+    .sum-keyrow input[type="text"] {
+      flex: 1; min-width: 200px; padding: 10px 14px; border-radius: 8px;
+      border: 2px solid #444; background: #0f0f23; color: #eee;
+      font-size: 0.95rem; outline: none; transition: border-color 0.2s;
+    }
+    .sum-keyrow input:focus { border-color: #e63946; }
+    #modelSelect {
+      padding: 10px 14px; border-radius: 8px; border: 2px solid #444;
+      background: #0f0f23; color: #eee; font-size: 0.95rem; cursor: pointer;
+    }
+    .sum-card textarea {
+      width: 100%; padding: 12px 16px; border-radius: 8px;
+      border: 2px solid #444; background: #0f0f23; color: #eee;
+      font-size: 1rem; line-height: 1.6; outline: none; resize: vertical;
+      font-family: inherit; transition: border-color 0.2s;
+    }
+    .sum-card textarea:focus { border-color: #e63946; }
+    .sum-actions { margin-top: 14px; }
+    .sum-btn {
+      padding: 10px 20px; border-radius: 8px; border: none;
+      background: #2a2a4a; color: #eee; font-size: 0.95rem;
+      cursor: pointer; transition: background 0.2s;
+    }
+    .sum-btn:hover { background: #3a3a5a; }
+    .sum-btn.primary { background: #e63946; color: #fff; }
+    .sum-btn.primary:hover { background: #c1121f; }
+    .sum-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .sum-note { margin-top: 12px; font-size: 0.8rem; color: #888; line-height: 1.5; }
+    .sum-note.error { color: #ff6b6b; }
+    .sum-note.ok { color: #6bc77f; }
+    #summaryOutput { color: #ddd; line-height: 1.7; white-space: pre-wrap; }
+    .sum-deepdive { margin-top: 22px; border-top: 1px solid #2a2a4a; padding-top: 18px; }
+    .chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+    .chip {
+      padding: 8px 14px; border-radius: 999px; border: 1px solid #3a3a5a;
+      background: #0f0f23; color: #cdd; font-size: 0.85rem;
+      cursor: pointer; transition: border-color 0.2s, color 0.2s;
+    }
+    .chip:hover { border-color: #e63946; color: #fff; }
+    .thread-item {
+      background: #0f0f23; border: 1px solid #2a2a4a; border-radius: 10px;
+      padding: 14px 16px; margin-top: 12px;
+    }
+    .thread-item .thread-q { color: #f1fa8c; font-size: 0.9rem; margin-bottom: 8px; }
+    .thread-item .thread-a { color: #ddd; line-height: 1.7; white-space: pre-wrap; }
+
     @media (max-width: 700px) {
       .docs-layout { flex-direction: column; }
       .docs-sidebar { width: 100%; position: static; }
@@ -284,6 +340,7 @@
 <nav>
   <button class="active" onclick="switchTab('explorer', this)">Explorer</button>
   <button onclick="switchTab('docs', this)">API Docs</button>
+  <button onclick="switchTab('summarize', this)">要約</button>
 </nav>
 
 <!-- ══ EXPLORER TAB ══ -->
@@ -300,6 +357,56 @@
       <button id="prevBtn" onclick="changePage(-1)" disabled>前へ</button>
       <span class="page-info" id="pageInfo"></span>
       <button id="nextBtn" onclick="changePage(1)">次へ</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ SUMMARIZE TAB ══ -->
+<div id="tab-summarize" class="tab-panel">
+  <div class="container">
+    <div class="sum-grid">
+
+      <!-- API 設定 -->
+      <div class="sum-card">
+        <h3>Claude API 設定</h3>
+        <div class="sum-keyrow">
+          <input type="password" id="claudeApiKey" placeholder="Anthropic API キー（sk-ant-...）" />
+          <select id="modelSelect">
+            <option value="claude-opus-4-8">Opus 4.8（高品質）</option>
+            <option value="claude-sonnet-4-6">Sonnet 4.6（標準）</option>
+            <option value="claude-haiku-4-5">Haiku 4.5（高速・低コスト）</option>
+          </select>
+          <button class="sum-btn" onclick="saveApiKey()">保存</button>
+        </div>
+        <p class="sum-note" id="keyStatus">
+          キーはこのブラウザの localStorage にのみ保存され、お使いの端末から外部には送られません（送信先は Anthropic API のみ）。共有端末での利用は非推奨です。
+        </p>
+      </div>
+
+      <!-- 口述入力 -->
+      <div class="sum-card">
+        <h3>口述テキスト</h3>
+        <textarea id="dictateInput" rows="8" placeholder="ここに音声入力（Aqua Voice）または貼り付けでテキストを入力してください…"></textarea>
+        <div class="sum-actions">
+          <button class="sum-btn primary" id="summarizeBtn" onclick="runSummarize()">要約する</button>
+        </div>
+      </div>
+
+      <!-- 要約結果 -->
+      <div class="sum-card" id="summarySection" style="display:none;">
+        <h3>要約</h3>
+        <div id="summaryOutput"></div>
+        <div class="sum-deepdive">
+          <h4>深掘り</h4>
+          <div id="deepDiveTopics" class="chip-row"></div>
+          <div class="sum-keyrow">
+            <input type="text" id="deepDiveInput" placeholder="自由に深掘りしたい点を入力…" />
+            <button class="sum-btn" onclick="runDeepDive()">深掘りする</button>
+          </div>
+          <div id="deepDiveThread"></div>
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -1307,6 +1414,150 @@
       responseEl.textContent = 'Error: ' + e.message;
       responseEl.classList.add('visible');
       btn.textContent = '閉じる';
+    }
+  }
+
+  /* ── Summarize & Deep-dive ── */
+  const CLAUDE_KEY_LS = 'pokemonExplorer.claudeApiKey';
+  let summaryThread = [];   // Claude messages 形式の会話履歴
+
+  // ページ読込時に保存済みキーを復元
+  (function restoreApiKey() {
+    const saved = localStorage.getItem(CLAUDE_KEY_LS);
+    if (saved) document.getElementById('claudeApiKey').value = saved;
+  })();
+
+  function saveApiKey() {
+    const key = document.getElementById('claudeApiKey').value.trim();
+    const status = document.getElementById('keyStatus');
+    if (!key) {
+      localStorage.removeItem(CLAUDE_KEY_LS);
+      status.textContent = 'キーをクリアしました。';
+      status.className = 'sum-note';
+      return;
+    }
+    localStorage.setItem(CLAUDE_KEY_LS, key);
+    status.textContent = 'キーを保存しました（このブラウザの localStorage に保持）。';
+    status.className = 'sum-note ok';
+  }
+
+  async function callClaude({ system, messages, outputFormat, maxTokens = 2048 }) {
+    const apiKey = localStorage.getItem(CLAUDE_KEY_LS) || document.getElementById('claudeApiKey').value.trim();
+    if (!apiKey) throw new Error('APIキーを入力して「保存」してください');
+    const body = {
+      model: document.getElementById('modelSelect').value,
+      max_tokens: maxTokens,
+      system,
+      messages,
+    };
+    if (outputFormat) body.output_config = { format: outputFormat };
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error('API エラー: ' + res.status + ' ' + (await res.text()));
+    const data = await res.json();
+    const block = data.content.find(b => b.type === 'text');
+    if (!block) throw new Error('応答にテキストが含まれていません');
+    return block.text;
+  }
+
+  async function runSummarize() {
+    const text = document.getElementById('dictateInput').value.trim();
+    const section = document.getElementById('summarySection');
+    const output = document.getElementById('summaryOutput');
+    const btn = document.getElementById('summarizeBtn');
+    if (!text) { alert('口述テキストを入力してください'); return; }
+
+    section.style.display = 'block';
+    output.textContent = '要約中…';
+    document.getElementById('deepDiveTopics').innerHTML = '';
+    document.getElementById('deepDiveThread').innerHTML = '';
+    btn.disabled = true;
+
+    const outputFormat = {
+      type: 'json_schema',
+      schema: {
+        type: 'object',
+        properties: {
+          summary: { type: 'string', description: '日本語の簡潔な箇条書き要約' },
+          topics: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'さらに深掘りすべき論点（3つ程度）',
+          },
+        },
+        required: ['summary', 'topics'],
+        additionalProperties: false,
+      },
+    };
+
+    try {
+      const userMsg = text;
+      const raw = await callClaude({
+        system: 'あなたは優秀な編集者です。ユーザーが口述したテキストを、日本語で簡潔な箇条書き（各行を「・」で始める）に要約してください。さらに、その内容についてさらに深掘りすべき論点を3つ提案してください。',
+        messages: [{ role: 'user', content: userMsg }],
+        outputFormat,
+      });
+      const parsed = JSON.parse(raw);
+      output.textContent = parsed.summary;
+
+      // 会話履歴を初期化（深掘りで文脈を引き継ぐ）
+      summaryThread = [
+        { role: 'user', content: userMsg },
+        { role: 'assistant', content: raw },
+      ];
+
+      // 深掘りチップを描画
+      const chipRow = document.getElementById('deepDiveTopics');
+      chipRow.innerHTML = (parsed.topics || []).map(t =>
+        `<button class="chip" onclick="runDeepDive(this.dataset.topic)" data-topic="${t.replace(/"/g, '&quot;')}">${t}</button>`
+      ).join('');
+    } catch (e) {
+      output.textContent = '';
+      const err = document.createElement('div');
+      err.className = 'sum-note error';
+      err.textContent = e.message;
+      output.appendChild(err);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function runDeepDive(topicText) {
+    const input = document.getElementById('deepDiveInput');
+    const topic = (typeof topicText === 'string' ? topicText : input.value).trim();
+    if (!topic) { alert('深掘りしたい点を入力するか、チップを選んでください'); return; }
+    if (summaryThread.length === 0) { alert('先に要約を作成してください'); return; }
+    if (typeof topicText !== 'string') input.value = '';
+
+    const thread = document.getElementById('deepDiveThread');
+    const item = document.createElement('div');
+    item.className = 'thread-item';
+    item.innerHTML = `<div class="thread-q">Q: ${topic}</div><div class="thread-a">深掘り中…</div>`;
+    thread.appendChild(item);
+    const answerEl = item.querySelector('.thread-a');
+
+    const messages = summaryThread.concat([
+      { role: 'user', content: `「${topic}」について、上記の内容を踏まえて詳しく深掘りして日本語で説明してください。` },
+    ]);
+
+    try {
+      const reply = await callClaude({ messages, maxTokens: 2048 });
+      answerEl.textContent = reply;
+      // 文脈を継続するため履歴に追記
+      summaryThread.push({ role: 'user', content: `「${topic}」について、上記の内容を踏まえて詳しく深掘りして日本語で説明してください。` });
+      summaryThread.push({ role: 'assistant', content: reply });
+    } catch (e) {
+      answerEl.textContent = '';
+      answerEl.className = 'thread-a sum-note error';
+      answerEl.textContent = e.message;
     }
   }
 
