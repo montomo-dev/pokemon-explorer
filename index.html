@@ -374,7 +374,7 @@
           <select id="modelSelect">
             <option value="claude-opus-4-8">Opus 4.8（高品質）</option>
             <option value="claude-sonnet-4-6">Sonnet 4.6（標準）</option>
-            <option value="claude-haiku-4-5">Haiku 4.5（高速・低コスト）</option>
+            <option value="claude-haiku-4-5-20251001">Haiku 4.5（高速・低コスト）</option>
           </select>
           <button class="sum-btn" onclick="saveApiKey()">保存</button>
         </div>
@@ -1441,7 +1441,7 @@
     status.className = 'sum-note ok';
   }
 
-  async function callClaude({ system, messages, outputFormat, maxTokens = 2048 }) {
+  async function callClaude({ system, messages, maxTokens = 2048 }) {
     const apiKey = localStorage.getItem(CLAUDE_KEY_LS) || document.getElementById('claudeApiKey').value.trim();
     if (!apiKey) throw new Error('APIキーを入力して「保存」してください');
     const body = {
@@ -1450,7 +1450,6 @@
       system,
       messages,
     };
-    if (outputFormat) body.output_config = { format: outputFormat };
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -1481,37 +1480,55 @@
     document.getElementById('deepDiveThread').innerHTML = '';
     btn.disabled = true;
 
-    const outputFormat = {
-      type: 'json_schema',
-      schema: {
-        type: 'object',
-        properties: {
-          summary: { type: 'string', description: '日本語の簡潔な箇条書き要約' },
-          topics: {
-            type: 'array',
-            items: { type: 'string' },
-            description: 'さらに深掘りすべき論点（3つ程度）',
-          },
-        },
-        required: ['summary', 'topics'],
-        additionalProperties: false,
-      },
-    };
-
     try {
+      const apiKey = localStorage.getItem(CLAUDE_KEY_LS) || document.getElementById('claudeApiKey').value.trim();
+      if (!apiKey) throw new Error('APIキーを入力して「保存」してください');
       const userMsg = text;
-      const raw = await callClaude({
-        system: 'あなたは優秀な編集者です。ユーザーが口述したテキストを、日本語で簡潔な箇条書き（各行を「・」で始める）に要約してください。さらに、その内容についてさらに深掘りすべき論点を3つ提案してください。',
-        messages: [{ role: 'user', content: userMsg }],
-        outputFormat,
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: document.getElementById('modelSelect').value,
+          max_tokens: 2048,
+          system: 'あなたは優秀な編集者です。ユーザーが口述したテキストを、日本語で簡潔な箇条書き（各行を「・」で始める）に要約してください。さらに、その内容についてさらに深掘りすべき論点を3つ提案してください。',
+          messages: [{ role: 'user', content: userMsg }],
+          tools: [{
+            name: 'record_summary',
+            description: '要約と深掘りトピックを記録する',
+            input_schema: {
+              type: 'object',
+              properties: {
+                summary: { type: 'string', description: '日本語の簡潔な箇条書き要約（各行を「・」で始める）' },
+                topics: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  description: 'さらに深掘りすべき論点（3つ程度）',
+                },
+              },
+              required: ['summary', 'topics'],
+              additionalProperties: false,
+            },
+          }],
+          tool_choice: { type: 'tool', name: 'record_summary' },
+        }),
       });
-      const parsed = JSON.parse(raw);
+      if (!res.ok) throw new Error('API エラー: ' + res.status + ' ' + (await res.text()));
+      const data = await res.json();
+      const toolBlock = data.content.find(b => b.type === 'tool_use');
+      if (!toolBlock) throw new Error('構造化応答が得られませんでした');
+      const parsed = toolBlock.input;
       output.textContent = parsed.summary;
 
-      // 会話履歴を初期化（深掘りで文脈を引き継ぐ）
+      // 会話履歴を人間可読テキストで初期化（深掘りで文脈を引き継ぐ）
+      const assistantText = `要約:\n${parsed.summary}\n\n深掘り候補:\n${(parsed.topics || []).map((t, i) => `${i + 1}. ${t}`).join('\n')}`;
       summaryThread = [
         { role: 'user', content: userMsg },
-        { role: 'assistant', content: raw },
+        { role: 'assistant', content: assistantText },
       ];
 
       // 深掘りチップを描画
