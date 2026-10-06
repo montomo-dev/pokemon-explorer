@@ -64,7 +64,7 @@
 
     .search-bar button {
       padding: 12px 24px; border-radius: 8px; border: none;
-      background: #e63946; color: #fff; font-size: 1rem;
+      background: #e42836; color: #fff; font-size: 1rem;   /* 白文字で4.5:1 */
       cursor: pointer; transition: background 0.2s;
     }
     .search-bar button:hover { background: #c1121f; }
@@ -83,7 +83,7 @@
     .pokemon-card:hover { border-color: #e63946; transform: translateY(-4px); }
     .pokemon-card img { width: 80px; height: 80px; image-rendering: pixelated; }
     .pokemon-card .name { margin-top: 8px; font-size: 0.85rem; text-transform: capitalize; color: #ccc; }
-    .pokemon-card .id  { font-size: 0.75rem; color: #666; }
+    .pokemon-card .id  { font-size: 0.75rem; color: #999; }
 
     /* Detail modal */
     .detail-overlay {
@@ -140,7 +140,7 @@
     }
     .pagination button:hover:not(:disabled) { border-color: #e63946; }
     .pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
-    .pagination .page-info { padding: 10px; color: #888; }
+    .pagination .page-info { padding: 10px; color: #999; }
 
     /* ── Docs tab ── */
     .docs-layout { display: flex; gap: 24px; align-items: flex-start; }
@@ -211,7 +211,7 @@
     .endpoint-body p { color: #aaa; font-size: 0.85rem; line-height: 1.6; margin: 12px 0 8px; }
     .endpoint-body .try-btn {
       display: inline-block; margin-top: 10px; padding: 7px 18px;
-      background: #e63946; color: #fff; border: none; border-radius: 6px;
+      background: #e42836; color: #fff; border: none; border-radius: 6px;
       font-size: 0.82rem; cursor: pointer; transition: background 0.2s;
     }
     .endpoint-body .try-btn:hover { background: #c1121f; }
@@ -255,7 +255,16 @@
     .type-steel    { background: #B8B8D0; color: #000; }
     .type-fairy    { background: #EE99AC; color: #000; }
 
-    .loading { text-align: center; padding: 40px; color: #888; }
+    .loading { text-align: center; padding: 40px; color: #999; }
+    .loading .retry-btn {
+      display: block; margin: 16px auto 0; padding: 10px 24px; border-radius: 8px;
+      border: 2px solid #e63946; background: transparent; color: #eee; font-size: 0.95rem; cursor: pointer;
+    }
+    .loading .retry-btn:hover { background: #e63946; }
+    :focus-visible { outline: 2px solid #f1fa8c; outline-offset: 2px; }
+    @media (prefers-reduced-motion: reduce) {
+      * { transition: none !important; scroll-behavior: auto !important; }
+    }
 
     /* Tab visibility */
     .tab-panel { display: none; }
@@ -1141,8 +1150,8 @@
 
 <!-- ══ DETAIL MODAL ══ -->
 <div class="detail-overlay" id="overlay" onclick="closeDetail(event)">
-  <div class="detail-panel" id="detailPanel">
-    <button class="close-btn" onclick="closeOverlay()">×</button>
+  <div class="detail-panel" id="detailPanel" role="dialog" aria-modal="true" aria-label="ポケモンの詳細">
+    <button class="close-btn" id="closeBtn" onclick="closeOverlay()" aria-label="閉じる">×</button>
     <div id="detailContent"></div>
   </div>
 </div>
@@ -1162,15 +1171,29 @@
   let totalCount = 0;
   let isSearchMode = false;
 
+  // 古い応答が新しい表示を上書きしないよう、リクエストごとに通し番号を振る
+  let loadSeq = 0;
+  let detailSeq = 0;
+
   async function fetchList(off) {
     const res = await fetch(`https://pokeapi.co/api/v2/pokemon?limit=${LIMIT}&offset=${off}`);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
     return res.json();
   }
 
   async function fetchPokemon(nameOrId) {
-    const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${nameOrId}`);
-    if (!res.ok) throw new Error('Not found');
+    const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${encodeURIComponent(nameOrId)}`);
+    if (!res.ok) {
+      const err = new Error(res.status === 404 ? 'Not found' : 'HTTP ' + res.status);
+      err.notFound = res.status === 404;
+      throw err;
+    }
     return res.json();
+  }
+
+  function showLoadError(target, message, retry) {
+    target.innerHTML = `<div class="loading">${message}<button class="retry-btn" type="button">再読み込み</button></div>`;
+    target.querySelector('.retry-btn').addEventListener('click', retry);
   }
 
   function spriteUrl(id) {
@@ -1179,7 +1202,7 @@
 
   function renderGrid(list) {
     document.getElementById('grid').innerHTML = list.map(p => `
-      <div class="pokemon-card" onclick="showDetail('${p.name}')">
+      <div class="pokemon-card" role="button" tabindex="0" data-name="${p.name}">
         <img src="${spriteUrl(p.id)}" alt="${p.name}" loading="lazy">
         <div class="name">${p.name}</div>
         <div class="id">#${String(p.id).padStart(3,'0')}</div>
@@ -1189,12 +1212,20 @@
 
   async function loadPage() {
     isSearchMode = false;
-    document.getElementById('grid').innerHTML = '<div class="loading">読み込み中...</div>';
-    const data = await fetchList(offset);
-    totalCount = data.count;
-    const pokemons = await Promise.all(data.results.map(r => fetchPokemon(r.name)));
-    renderGrid(pokemons);
-    updatePagination();
+    const seq = ++loadSeq;
+    const grid = document.getElementById('grid');
+    grid.innerHTML = '<div class="loading">読み込み中...</div>';
+    try {
+      const data = await fetchList(offset);
+      const pokemons = await Promise.all(data.results.map(r => fetchPokemon(r.name)));
+      if (seq !== loadSeq) return;   // もっと新しい読み込みが始まっている
+      totalCount = data.count;
+      renderGrid(pokemons);
+      updatePagination();
+    } catch {
+      if (seq !== loadSeq) return;
+      showLoadError(grid, '読み込めませんでした。通信状況を確認してください。', loadPage);
+    }
   }
 
   function updatePagination() {
@@ -1207,7 +1238,9 @@
   }
 
   function changePage(dir) {
-    offset += dir * LIMIT;
+    const next = offset + dir * LIMIT;
+    if (next < 0 || (totalCount && next >= totalCount)) return;   // 読み込み中の連打で範囲外に出ない
+    offset = next;
     loadPage();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -1216,24 +1249,53 @@
     const q = document.getElementById('searchInput').value.trim().toLowerCase();
     if (!q) { isSearchMode = false; offset = 0; loadPage(); return; }
     isSearchMode = true;
-    document.getElementById('grid').innerHTML = '<div class="loading">検索中...</div>';
+    const seq = ++loadSeq;
+    const grid = document.getElementById('grid');
+    grid.innerHTML = '<div class="loading">検索中...</div>';
     document.querySelector('.pagination').style.display = 'none';
     try {
       const p = await fetchPokemon(q);
+      if (seq !== loadSeq) return;
       renderGrid([p]);
-    } catch {
-      document.getElementById('grid').innerHTML = '<div class="loading">見つかりませんでした。</div>';
+    } catch (err) {
+      if (seq !== loadSeq) return;
+      if (err.notFound) grid.innerHTML = '<div class="loading">見つかりませんでした。</div>';
+      else showLoadError(grid, '検索できませんでした。通信状況を確認してください。', searchPokemon);
     }
   }
+
+  // カードはキーボード(Tab / Enter / Space)でも開けるようにする
+  const gridEl = document.getElementById('grid');
+  gridEl.addEventListener('click', e => {
+    const card = e.target.closest('.pokemon-card');
+    if (card) showDetail(card.dataset.name);
+  });
+  gridEl.addEventListener('keydown', e => {
+    const card = e.target.closest('.pokemon-card');
+    if (card && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); showDetail(card.dataset.name); }
+  });
 
   document.getElementById('searchInput').addEventListener('keydown', e => {
     if (e.key === 'Enter') searchPokemon();
   });
 
+  let lastFocus = null;
+
   async function showDetail(nameOrId) {
-    document.getElementById('detailContent').innerHTML = '<div class="loading">読み込み中...</div>';
+    const seq = ++detailSeq;
+    const content = document.getElementById('detailContent');
+    if (!document.getElementById('overlay').classList.contains('active')) lastFocus = document.activeElement;
+    content.innerHTML = '<div class="loading">読み込み中...</div>';
     document.getElementById('overlay').classList.add('active');
-    const p = await fetchPokemon(nameOrId);
+    document.getElementById('closeBtn').focus();
+    let p;
+    try {
+      p = await fetchPokemon(nameOrId);
+    } catch {
+      if (seq === detailSeq) showLoadError(content, '詳細を読み込めませんでした。', () => showDetail(nameOrId));
+      return;
+    }
+    if (seq !== detailSeq) return;   // 閉じた/別のカードを開いた後に届いた応答は捨てる
 
     const types = p.types.map(t =>
       `<span class="type-badge type-${t.type.name}">${t.type.name}</span>`
@@ -1274,8 +1336,14 @@
   }
 
   function closeOverlay() {
+    detailSeq++;
     document.getElementById('overlay').classList.remove('active');
+    if (lastFocus && lastFocus.focus) lastFocus.focus();
   }
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && document.getElementById('overlay').classList.contains('active')) closeOverlay();
+  });
 
   function closeDetail(e) {
     if (e.target === document.getElementById('overlay')) closeOverlay();
@@ -1284,21 +1352,35 @@
   /* ── Docs ── */
   function toggleCard(card) {
     card.classList.toggle('open');
+    const header = card.querySelector('.endpoint-card-header');
+    if (header) header.setAttribute('aria-expanded', String(card.classList.contains('open')));
   }
+
+  // API Docsの各エンドポイント見出しをキーボードで開閉できるようにする
+  document.querySelectorAll('.endpoint-card-header').forEach(h => {
+    h.setAttribute('role', 'button');
+    h.setAttribute('tabindex', '0');
+    h.setAttribute('aria-expanded', 'false');
+    h.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleCard(h.parentElement); }
+    });
+  });
 
   async function tryApi(event, url, btn) {
     event.stopPropagation();
     const responseEl = btn.nextElementSibling;
+    if (!btn.dataset.label) btn.dataset.label = btn.textContent;   // 元のラベル(例: "Try it — ja")を覚えておく
 
     if (responseEl.classList.contains('visible')) {
       responseEl.classList.remove('visible');
-      btn.textContent = btn.textContent.replace('閉じる', 'Try it').replace('...', btn.dataset.label || 'Try it');
+      btn.textContent = btn.dataset.label;
       return;
     }
 
     btn.textContent = '読み込み中...';
     try {
       const res = await fetch(url);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
       responseEl.textContent = JSON.stringify(data, null, 2);
       responseEl.classList.add('visible');
