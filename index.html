@@ -1164,11 +1164,12 @@
 
   async function fetchList(off) {
     const res = await fetch(`https://pokeapi.co/api/v2/pokemon?limit=${LIMIT}&offset=${off}`);
+    if (!res.ok) throw new Error('Failed to load list');
     return res.json();
   }
 
   async function fetchPokemon(nameOrId) {
-    const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${nameOrId}`);
+    const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${encodeURIComponent(nameOrId)}`);
     if (!res.ok) throw new Error('Not found');
     return res.json();
   }
@@ -1187,14 +1188,29 @@
     `).join('');
   }
 
+  // 連打や検索で複数のリクエストが重なっても、最後に始めたものの結果だけを表示する
+  let gridRequestId = 0;
+
+  function showGridError() {
+    document.getElementById('grid').innerHTML =
+      '<div class="loading">読み込みに失敗しました。通信状況を確認してください。' +
+      '<br><button onclick="loadPage()">再試行</button></div>';
+  }
+
   async function loadPage() {
+    const requestId = ++gridRequestId;
     isSearchMode = false;
     document.getElementById('grid').innerHTML = '<div class="loading">読み込み中...</div>';
-    const data = await fetchList(offset);
-    totalCount = data.count;
-    const pokemons = await Promise.all(data.results.map(r => fetchPokemon(r.name)));
-    renderGrid(pokemons);
-    updatePagination();
+    try {
+      const data = await fetchList(offset);
+      const pokemons = await Promise.all(data.results.map(r => fetchPokemon(r.name)));
+      if (requestId !== gridRequestId) return;
+      totalCount = data.count;
+      renderGrid(pokemons);
+      updatePagination();
+    } catch {
+      if (requestId === gridRequestId) showGridError();
+    }
   }
 
   function updatePagination() {
@@ -1215,13 +1231,16 @@
   async function searchPokemon() {
     const q = document.getElementById('searchInput').value.trim().toLowerCase();
     if (!q) { isSearchMode = false; offset = 0; loadPage(); return; }
+    const requestId = ++gridRequestId;
     isSearchMode = true;
     document.getElementById('grid').innerHTML = '<div class="loading">検索中...</div>';
     document.querySelector('.pagination').style.display = 'none';
     try {
       const p = await fetchPokemon(q);
+      if (requestId !== gridRequestId) return;
       renderGrid([p]);
     } catch {
+      if (requestId !== gridRequestId) return;
       document.getElementById('grid').innerHTML = '<div class="loading">見つかりませんでした。</div>';
     }
   }
@@ -1230,10 +1249,22 @@
     if (e.key === 'Enter') searchPokemon();
   });
 
+  let detailRequestId = 0;
+
   async function showDetail(nameOrId) {
+    const requestId = ++detailRequestId;
     document.getElementById('detailContent').innerHTML = '<div class="loading">読み込み中...</div>';
     document.getElementById('overlay').classList.add('active');
-    const p = await fetchPokemon(nameOrId);
+    let p;
+    try {
+      p = await fetchPokemon(nameOrId);
+    } catch {
+      if (requestId === detailRequestId) {
+        document.getElementById('detailContent').innerHTML = '<div class="loading">読み込みに失敗しました。閉じてもう一度お試しください。</div>';
+      }
+      return;
+    }
+    if (requestId !== detailRequestId) return;
 
     const types = p.types.map(t =>
       `<span class="type-badge type-${t.type.name}">${t.type.name}</span>`
@@ -1274,8 +1305,13 @@
   }
 
   function closeOverlay() {
+    detailRequestId++; // 閉じたあとに遅れて届いた応答でモーダルが書き換わらないようにする
     document.getElementById('overlay').classList.remove('active');
   }
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeOverlay();
+  });
 
   function closeDetail(e) {
     if (e.target === document.getElementById('overlay')) closeOverlay();
@@ -1289,14 +1325,17 @@
   async function tryApi(event, url, btn) {
     event.stopPropagation();
     const responseEl = btn.nextElementSibling;
+    if (btn.dataset.loading) return; // 読み込み中の二重実行を防ぐ
+    if (!btn.dataset.label) btn.dataset.label = btn.textContent; // 元のラベル(例: "Try it — cheri")を保持
 
     if (responseEl.classList.contains('visible')) {
       responseEl.classList.remove('visible');
-      btn.textContent = btn.textContent.replace('閉じる', 'Try it').replace('...', btn.dataset.label || 'Try it');
+      btn.textContent = btn.dataset.label;
       return;
     }
 
     btn.textContent = '読み込み中...';
+    btn.dataset.loading = '1';
     try {
       const res = await fetch(url);
       const data = await res.json();
@@ -1307,6 +1346,8 @@
       responseEl.textContent = 'Error: ' + e.message;
       responseEl.classList.add('visible');
       btn.textContent = '閉じる';
+    } finally {
+      delete btn.dataset.loading;
     }
   }
 
