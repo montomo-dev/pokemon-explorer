@@ -81,6 +81,13 @@
       cursor: pointer; transition: border-color 0.2s, transform 0.2s;
     }
     .pokemon-card:hover { border-color: #e63946; transform: translateY(-4px); }
+    .pokemon-card:focus-visible, nav button:focus-visible, .close-btn:focus-visible,
+    .try-btn:focus-visible, .retry-btn:focus-visible { outline: 2px solid #f1fa8c; outline-offset: 2px; }
+    .retry-btn {
+      display: block; margin: 12px auto 0; padding: 8px 18px; border: none; border-radius: 6px;
+      background: #e63946; color: #fff; cursor: pointer; font-size: 0.9rem;
+    }
+    .retry-btn:hover { background: #c1121f; }
     .pokemon-card img { width: 80px; height: 80px; image-rendering: pixelated; }
     .pokemon-card .name { margin-top: 8px; font-size: 0.85rem; text-transform: capitalize; color: #ccc; }
     .pokemon-card .id  { font-size: 0.75rem; color: #666; }
@@ -1141,8 +1148,8 @@
 
 <!-- ══ DETAIL MODAL ══ -->
 <div class="detail-overlay" id="overlay" onclick="closeDetail(event)">
-  <div class="detail-panel" id="detailPanel">
-    <button class="close-btn" onclick="closeOverlay()">×</button>
+  <div class="detail-panel" id="detailPanel" role="dialog" aria-modal="true" aria-label="ポケモンの詳細">
+    <button class="close-btn" id="closeBtn" aria-label="閉じる" onclick="closeOverlay()">×</button>
     <div id="detailContent"></div>
   </div>
 </div>
@@ -1162,16 +1169,32 @@
   let totalCount = 0;
   let isSearchMode = false;
 
-  async function fetchList(off) {
-    const res = await fetch(`https://pokeapi.co/api/v2/pokemon?limit=${LIMIT}&offset=${off}`);
+  // 失敗(404含む)を必ず例外にして、呼び出し側のcatchで画面に出せるようにする
+  async function fetchJson(url) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(res.status === 404 ? 'Not found' : `HTTP ${res.status}`);
     return res.json();
   }
 
-  async function fetchPokemon(nameOrId) {
-    const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${nameOrId}`);
-    if (!res.ok) throw new Error('Not found');
-    return res.json();
+  function fetchList(off) {
+    return fetchJson(`https://pokeapi.co/api/v2/pokemon?limit=${LIMIT}&offset=${off}`);
   }
+
+  function fetchPokemon(nameOrId) {
+    return fetchJson(`https://pokeapi.co/api/v2/pokemon/${encodeURIComponent(nameOrId)}`);
+  }
+
+  // 一覧APIの各要素は url の末尾に番号を持っている（例: .../pokemon/25/）
+  function idFromUrl(url) {
+    return Number(url.split('/').filter(Boolean).pop());
+  }
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  const RETRY_HTML = '<div class="loading">読み込めませんでした。通信を確認してください。<button class="retry-btn" onclick="loadPage()">もう一度試す</button></div>';
+  let loadToken = 0; // 連打で古い応答が新しい画面を上書きしないようにする
 
   function spriteUrl(id) {
     return `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${id}.png`;
@@ -1179,9 +1202,9 @@
 
   function renderGrid(list) {
     document.getElementById('grid').innerHTML = list.map(p => `
-      <div class="pokemon-card" onclick="showDetail('${p.name}')">
-        <img src="${spriteUrl(p.id)}" alt="${p.name}" loading="lazy">
-        <div class="name">${p.name}</div>
+      <div class="pokemon-card" role="button" tabindex="0" data-name="${esc(p.name)}">
+        <img src="${spriteUrl(p.id)}" alt="${esc(p.name)}" loading="lazy">
+        <div class="name">${esc(p.name)}</div>
         <div class="id">#${String(p.id).padStart(3,'0')}</div>
       </div>
     `).join('');
@@ -1189,17 +1212,24 @@
 
   async function loadPage() {
     isSearchMode = false;
+    const token = ++loadToken;
     document.getElementById('grid').innerHTML = '<div class="loading">読み込み中...</div>';
-    const data = await fetchList(offset);
-    totalCount = data.count;
-    const pokemons = await Promise.all(data.results.map(r => fetchPokemon(r.name)));
-    renderGrid(pokemons);
-    updatePagination();
+    try {
+      const data = await fetchList(offset);
+      if (token !== loadToken) return;
+      totalCount = data.count;
+      // 一覧に出すのは画像・名前・番号だけなので、1匹ずつ取得せず一覧の結果をそのまま使う（21回→1回）
+      renderGrid(data.results.map(r => ({ name: r.name, id: idFromUrl(r.url) })));
+    } catch {
+      if (token !== loadToken) return;
+      document.getElementById('grid').innerHTML = RETRY_HTML;
+    }
+    if (token === loadToken) updatePagination();
   }
 
   function updatePagination() {
     const page = Math.floor(offset / LIMIT) + 1;
-    const total = Math.ceil(totalCount / LIMIT);
+    const total = Math.max(1, Math.ceil(totalCount / LIMIT));
     document.getElementById('pageInfo').textContent = `${page} / ${total} ページ`;
     document.getElementById('prevBtn').disabled = offset === 0;
     document.getElementById('nextBtn').disabled = offset + LIMIT >= totalCount;
@@ -1216,13 +1246,18 @@
     const q = document.getElementById('searchInput').value.trim().toLowerCase();
     if (!q) { isSearchMode = false; offset = 0; loadPage(); return; }
     isSearchMode = true;
+    const token = ++loadToken;
     document.getElementById('grid').innerHTML = '<div class="loading">検索中...</div>';
     document.querySelector('.pagination').style.display = 'none';
     try {
       const p = await fetchPokemon(q);
+      if (token !== loadToken) return;
       renderGrid([p]);
-    } catch {
-      document.getElementById('grid').innerHTML = '<div class="loading">見つかりませんでした。</div>';
+    } catch (e) {
+      if (token !== loadToken) return;
+      document.getElementById('grid').innerHTML = e.message === 'Not found'
+        ? '<div class="loading">見つかりませんでした。</div>'
+        : '<div class="loading">検索できませんでした。通信を確認してください。</div>';
     }
   }
 
@@ -1230,10 +1265,23 @@
     if (e.key === 'Enter') searchPokemon();
   });
 
+  let lastFocus = null;
+  let detailToken = 0;
+
   async function showDetail(nameOrId) {
+    const token = ++detailToken;
+    lastFocus = document.activeElement;
     document.getElementById('detailContent').innerHTML = '<div class="loading">読み込み中...</div>';
     document.getElementById('overlay').classList.add('active');
-    const p = await fetchPokemon(nameOrId);
+    document.getElementById('closeBtn').focus();
+    let p;
+    try {
+      p = await fetchPokemon(nameOrId);
+    } catch {
+      if (token === detailToken) document.getElementById('detailContent').innerHTML = '<div class="loading">読み込めませんでした。閉じてもう一度お試しください。</div>';
+      return;
+    }
+    if (token !== detailToken) return; // 読み込み中に閉じた/別のカードを開いた
 
     const types = p.types.map(t =>
       `<span class="type-badge type-${t.type.name}">${t.type.name}</span>`
@@ -1274,8 +1322,26 @@
   }
 
   function closeOverlay() {
+    detailToken++;
     document.getElementById('overlay').classList.remove('active');
+    if (lastFocus && lastFocus.focus) lastFocus.focus();
   }
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && document.getElementById('overlay').classList.contains('active')) closeOverlay();
+  });
+
+  const gridEl = document.getElementById('grid');
+  gridEl.addEventListener('click', e => {
+    const card = e.target.closest('.pokemon-card');
+    if (card) showDetail(card.dataset.name);
+  });
+  gridEl.addEventListener('keydown', e => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('.pokemon-card')) {
+      e.preventDefault();
+      showDetail(e.target.dataset.name);
+    }
+  });
 
   function closeDetail(e) {
     if (e.target === document.getElementById('overlay')) closeOverlay();
@@ -1289,25 +1355,27 @@
   async function tryApi(event, url, btn) {
     event.stopPropagation();
     const responseEl = btn.nextElementSibling;
+    if (btn.disabled) return;
+    // 元のラベル（例: "Try it — cheri"）を覚えておき、閉じたときに元に戻す
+    if (!btn.dataset.label) btn.dataset.label = btn.textContent;
 
     if (responseEl.classList.contains('visible')) {
       responseEl.classList.remove('visible');
-      btn.textContent = btn.textContent.replace('閉じる', 'Try it').replace('...', btn.dataset.label || 'Try it');
+      btn.textContent = btn.dataset.label;
       return;
     }
 
     btn.textContent = '読み込み中...';
+    btn.disabled = true;
     try {
-      const res = await fetch(url);
-      const data = await res.json();
+      const data = await fetchJson(url);
       responseEl.textContent = JSON.stringify(data, null, 2);
-      responseEl.classList.add('visible');
-      btn.textContent = '閉じる';
     } catch (e) {
       responseEl.textContent = 'Error: ' + e.message;
-      responseEl.classList.add('visible');
-      btn.textContent = '閉じる';
     }
+    responseEl.classList.add('visible');
+    btn.textContent = '閉じる';
+    btn.disabled = false;
   }
 
   loadPage();
